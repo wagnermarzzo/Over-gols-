@@ -208,8 +208,6 @@ def monitorar():
                     continue
 
                 jogo_id = jogo["fixture"]["id"]
-                if not deve_checar(jogo_id, intervalo=30):
-                    continue
 
                 home = jogo["teams"]["home"]["name"]
                 away = jogo["teams"]["away"]["name"]
@@ -230,7 +228,18 @@ def monitorar():
                             stats["away_shots_on_goal"] = stat.get("shots_on_goal", 0)
                             stats["away_possession"] = stat.get("possession", 50)
 
+                # ------------------- LOG DETALHADO -------------------
+                print("🔹 Jogo encontrado:")
+                print(f"  {home} x {away} | Minuto: {minute}' | Status: {status}")
+                print(f"  Placar: {home_goals}x{away_goals}")
+                print(f"  Estatísticas: {stats}")
+
+                if not deve_checar(jogo_id, intervalo=30):
+                    continue
+
                 sinal = analisar_jogo_quente(minute, home_goals, away_goals, stats)
+                print(f"  Sinal gerado: {sinal}")  # LOG do sinal
+
                 if sinal and (jogo_id, sinal) not in enviados:
                     mensagem = (
                         f"⚽ ENTRADA QUENTE: {sinal}\n"
