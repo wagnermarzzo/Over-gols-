@@ -69,15 +69,20 @@ def buscar_info_sportdb(time):
         return {"nome": time, "estadio": "N/D", "logo": "", "website": "N/D", "ultimos_resultados": "N/D"}
 
 def enviar_sinal_inicial():
-    """Envia primeiro sinal baseado no primeiro jogo ao vivo e registra aposta"""
+    """Envia sinais iniciais para todos os jogos ao vivo"""
     try:
         headers = {"x-apisports-key": API_FOOTBALL_KEY}
         response = requests.get(LIVE_API_FOOTBALL, headers=headers, timeout=10)
         data = response.json()
 
-        if "response" in data and data["response"]:
-            jogo = data["response"][0]
-            minute = jogo["fixture"]["status"]["elapsed"] or 0
+        jogos_enviados = 0
+
+        for jogo in data.get("response", []):
+            status = jogo["fixture"]["status"]["short"]
+            if status not in ["1H", "2H", "LIVE"]:
+                continue  # ignora jogos não ao vivo
+
+            minute = jogo["fixture"]["status"].get("elapsed") or 0
             home = jogo["teams"]["home"]["name"]
             away = jogo["teams"]["away"]["name"]
             home_goals = jogo["goals"]["home"] or 0
@@ -110,7 +115,6 @@ def enviar_sinal_inicial():
             )
             enviar_sinal(mensagem)
 
-            # 🔹 Registra aposta ativa para checar resultado depois
             apostas_ativas.append({
                 "jogo_id": jogo["fixture"]["id"],
                 "sinal": sinal,
@@ -118,8 +122,12 @@ def enviar_sinal_inicial():
                 "away_goals": away_goals,
                 "finalizado": False
             })
-        else:
+
+            jogos_enviados += 1
+
+        if jogos_enviados == 0:
             enviar_sinal("⚽ Nenhum jogo ao vivo, sinal inicial de teste enviado.")
+
     except Exception as e:
         print("Erro ao enviar sinal inicial:", e)
         enviar_sinal("⚽ Erro ao buscar jogos, sinal inicial de teste enviado.")
@@ -144,10 +152,8 @@ def checar_resultados():
                     home_goals = jogo["goals"]["home"] or 0
                     away_goals = jogo["goals"]["away"] or 0
 
-                    # Checa se o jogo terminou
                     if status in ["FT", "AET", "PEN"]:
                         resultado = "Red ❌"
-                        # Simples verificação para OVER 1.5 FT
                         if "OVER 1.5" in aposta["sinal"] and (home_goals + away_goals) > 1:
                             resultado = "Green ✅"
                         elif "OVER 0.5" in aposta["sinal"] and (home_goals + away_goals) > 0:
@@ -183,7 +189,7 @@ def monitorar():
                 continue
 
             for jogo in data["response"]:
-                minute = jogo["fixture"]["status"]["elapsed"] or 0
+                minute = jogo["fixture"]["status"].get("elapsed") or 0
                 if minute < 45:
                     continue
 
@@ -243,7 +249,7 @@ def status_periodico():
         time.sleep(900)
 
 if __name__ == "__main__":
-    # 🔹 Envia sinal inicial real
+    # 🔹 Envia sinais iniciais reais
     enviar_sinal_inicial()
 
     # 🔹 Inicia threads
