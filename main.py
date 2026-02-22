@@ -19,7 +19,7 @@ app = Flask(__name__)
 jogos_ativos = []
 apostas_ativas = []
 
-# Cache
+# Cache e controle de requisições
 cache_jogos = {}
 cache_times = {}
 TEMPO_CACHE_JOGOS = 15
@@ -37,7 +37,7 @@ def enviar_sinal(mensagem):
     payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "HTML"}
     executor.submit(lambda: requests.post(url, data=payload, timeout=10))
 
-# -------------------- Filtro inteligente --------------------
+# -------------------- Filtro de sinais “quentes” --------------------
 def analisar_jogo_quente(minute, home_goals, away_goals, stats):
     total = home_goals + away_goals
     home_attacks = stats.get("home_attacks", 0)
@@ -46,6 +46,10 @@ def analisar_jogo_quente(minute, home_goals, away_goals, stats):
     away_shots = stats.get("away_shots_on_goal", 0)
     home_possession = stats.get("home_possession", 50)
     away_possession = stats.get("away_possession", 50)
+
+    # Só operamos a partir do minuto 60
+    if minute < 60:
+        return None
 
     # Critérios para OVER “quente”
     if minute >= 70 and total == 0 and (home_attacks + away_attacks) >= 10:
@@ -59,7 +63,7 @@ def analisar_jogo_quente(minute, home_goals, away_goals, stats):
             return "OVER 2.5 FT AWAY"
     if total == 1 and (home_possession >= 60 or away_possession >= 60):
         return "OVER 1.5 FT POSSE"
-    # Se não atende critério “quente”, retorna None
+
     return None
 
 # -------------------- Cache --------------------
@@ -95,17 +99,18 @@ def buscar_info_sportdb(time):
         cache_times[time] = (info, agora)
         return info
     except:
-        return {"nome": time, "estadio": "N/D", "logo": "", "website": "N/D", "ultimos_resultados": "N/D"}
+        return {"nome": time, "estadio": "N/D", "logo": "", "website": "N/D"}
 
-def deve_checar(jogo_id, intervalo=15):
+def deve_checar(jogo_id, intervalo=30):
     agora = time.time()
     if jogo_id not in ultimo_check or agora - ultimo_check[jogo_id] > intervalo:
         ultimo_check[jogo_id] = agora
         return True
     return False
 
-# -------------------- Sinal inicial quente --------------------
+# -------------------- Sinal inicial --------------------
 def enviar_sinal_inicial():
+    """Envia o primeiro sinal real para jogos já quentes"""
     try:
         headers = {"x-apisports-key": API_FOOTBALL_KEY}
         response = requests.get(LIVE_API_FOOTBALL, headers=headers, timeout=10)
@@ -113,11 +118,14 @@ def enviar_sinal_inicial():
         jogos_enviados = 0
 
         for jogo in data.get("response", []):
+            minute = jogo["fixture"]["status"].get("elapsed") or 0
+            if minute < 60:
+                continue  # ignora jogos antes do minuto 60
+
             status = jogo["fixture"]["status"]["short"]
             if status not in ["1H", "2H", "LIVE"]:
                 continue
 
-            minute = jogo["fixture"]["status"].get("elapsed") or 0
             home = jogo["teams"]["home"]["name"]
             away = jogo["teams"]["away"]["name"]
             league = jogo["league"]["name"]
@@ -139,13 +147,13 @@ def enviar_sinal_inicial():
 
             sinal = analisar_jogo_quente(minute, home_goals, away_goals, stats)
             if not sinal:
-                continue  # Ignora jogos sem chance real de OVER
+                continue  # só envia sinal real para jogos quentes
 
             home_info = buscar_info_sportdb(home)
             away_info = buscar_info_sportdb(away)
 
             mensagem = (
-                f"⚽ ENTRADA INICIAL QUENTE: {sinal}\n"
+                f"⚽ PRIMEIRO SINAL REAL: {sinal}\n"
                 f"<b>{home_info['nome']} x {away_info['nome']}</b>\n"
                 f"Liga: <b>{league}</b>\n"
                 f"Minuto: {minute}' | Placar: {home_goals}x{away_goals}"
@@ -165,14 +173,14 @@ def enviar_sinal_inicial():
             enviar_sinal("⚽ Nenhum jogo quente ao vivo no momento.")
 
     except Exception as e:
-        print("Erro ao enviar sinal inicial:", e)
+        print("Erro enviar_sinal_inicial:", e)
         enviar_sinal("⚽ Erro ao buscar jogos iniciais.")
 
 # -------------------- Monitoramento --------------------
 def monitorar():
     enviados = set()
     global jogos_ativos
-    print("🔥 Monitoramento iniciado (2º tempo)")
+    print("🔥 Monitoramento iniciado (apenas jogos >= minuto 60)")
 
     while True:
         try:
@@ -183,11 +191,11 @@ def monitorar():
 
             for jogo in data.get("response", []):
                 minute = jogo["fixture"]["status"].get("elapsed") or 0
-                if minute < 45:
-                    continue
+                if minute < 60:
+                    continue  # só monitora jogos quentes
 
                 jogo_id = jogo["fixture"]["id"]
-                if not deve_checar(jogo_id, intervalo=15):
+                if not deve_checar(jogo_id, intervalo=30):
                     continue
 
                 home = jogo["teams"]["home"]["name"]
@@ -287,7 +295,7 @@ def status_periodico():
 
 # -------------------- Main --------------------
 if __name__ == "__main__":
-    enviar_sinal_inicial()
+    enviar_sinal_inicial()  # garante primeiro sinal real
     threading.Thread(target=monitorar, daemon=True).start()
     threading.Thread(target=status_periodico, daemon=True).start()
     threading.Thread(target=checar_resultados, daemon=True).start()
