@@ -32,10 +32,20 @@ executor = ThreadPoolExecutor(max_workers=3)
 def home():
     return "🔥 Football Bot Online 🚀"
 
+# -------------------- Helpers --------------------
 def enviar_sinal(mensagem):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "HTML"}
     executor.submit(lambda: requests.post(url, data=payload, timeout=10))
+
+def extrair_minuto(raw_minute):
+    """Converte minuto da API em inteiro, tratando None e '45+'"""
+    if raw_minute is None:
+        return 0
+    try:
+        return int(str(raw_minute).replace("+", ""))
+    except:
+        return 0
 
 # -------------------- Filtro de sinais “quentes” --------------------
 def analisar_jogo_quente(minute, home_goals, away_goals, stats):
@@ -47,11 +57,9 @@ def analisar_jogo_quente(minute, home_goals, away_goals, stats):
     home_possession = stats.get("home_possession", 50)
     away_possession = stats.get("away_possession", 50)
 
-    # Só operamos a partir do minuto 60
     if minute < 60:
-        return None
+        return None  # só operamos a partir do minuto 60
 
-    # Critérios para OVER “quente”
     if minute >= 70 and total == 0 and (home_attacks + away_attacks) >= 10:
         return "OVER 0.5 FT"
     if 55 <= minute <= 65 and total == 1 and (home_attacks + away_attacks) >= 15:
@@ -110,7 +118,6 @@ def deve_checar(jogo_id, intervalo=30):
 
 # -------------------- Sinal inicial --------------------
 def enviar_sinal_inicial():
-    """Envia o primeiro sinal real para jogos já quentes"""
     try:
         headers = {"x-apisports-key": API_FOOTBALL_KEY}
         response = requests.get(LIVE_API_FOOTBALL, headers=headers, timeout=10)
@@ -118,13 +125,14 @@ def enviar_sinal_inicial():
         jogos_enviados = 0
 
         for jogo in data.get("response", []):
-            minute = jogo["fixture"]["status"].get("elapsed") or 0
-            if minute < 60:
-                continue  # ignora jogos antes do minuto 60
-
+            raw_minute = jogo["fixture"]["status"].get("elapsed")
+            minute = extrair_minuto(raw_minute)
             status = jogo["fixture"]["status"]["short"]
-            if status not in ["1H", "2H", "LIVE"]:
+
+            if status not in ["1H", "2H", "LIVE", "HT", "ET"]:
                 continue
+            if minute < 60:
+                continue  # só jogos quentes
 
             home = jogo["teams"]["home"]["name"]
             away = jogo["teams"]["away"]["name"]
@@ -147,7 +155,7 @@ def enviar_sinal_inicial():
 
             sinal = analisar_jogo_quente(minute, home_goals, away_goals, stats)
             if not sinal:
-                continue  # só envia sinal real para jogos quentes
+                continue
 
             home_info = buscar_info_sportdb(home)
             away_info = buscar_info_sportdb(away)
@@ -190,9 +198,14 @@ def monitorar():
             jogos_ativos = []
 
             for jogo in data.get("response", []):
-                minute = jogo["fixture"]["status"].get("elapsed") or 0
+                raw_minute = jogo["fixture"]["status"].get("elapsed")
+                minute = extrair_minuto(raw_minute)
+                status = jogo["fixture"]["status"]["short"]
+
+                if status not in ["1H", "2H", "LIVE", "HT", "ET"]:
+                    continue
                 if minute < 60:
-                    continue  # só monitora jogos quentes
+                    continue
 
                 jogo_id = jogo["fixture"]["id"]
                 if not deve_checar(jogo_id, intervalo=30):
